@@ -1,5 +1,6 @@
 local psHousing = GetResourceState("ps-housing") ~= "missing"
-local qbHousing = GetResourceState("qb-houses") ~= "missing"
+local qbHousing = GetResourceState("qb-houses") ~= "missing"    
+local qsHousing = GetResourceState("qs-housing") ~= "missing"    
 local isServer = IsDuplicityVersion()
 
 local lasthouse = nil
@@ -8,7 +9,7 @@ local isOwner = false
 
 
 --- for qb-houses or ps-housing
-if qbHousing or psHousing then
+if qbHousing or psHousing or qsHousing then
     RegisterNetEvent('qb-garages:client:setHouseGarage', function(house, hasKey)
         local HG = Config.HouseGarages[house]
         if not HG then return end
@@ -68,7 +69,7 @@ if qbHousing or psHousing then
         TriggerServerEvent('rhd_garage:server:addHouseGarage', house, garageInfo)
     end)
     
-    if psHousing then
+    if psHousing or qsHousing then
         RegisterNetEvent('qb-garages:client:removeHouseGarage', function(house)
             Config.HouseGarages[house] = nil
         end)
