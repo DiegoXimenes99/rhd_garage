@@ -29,6 +29,7 @@ lib.callback.register('rhd_garage:cb_server:getoutsideVehicleCoords', function(_
     local coords = vehicle and vehicle.exist and vehicle.coords or nil
     if not coords and garage then
         local gz = GarageZone[garage]
+        if gz and GarageZone[garage].impound then return end
         local gp = gz and #gz.zones.points
         local gc = gp and gz.zones.points[gp]
         coords = gc and vec(gc.x, gc.y, gc.z) or nil
