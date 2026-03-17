@@ -1,5 +1,7 @@
 local VehicleShow = nil
 local Deformation = require 'modules.deformation'
+local ActiveGarageData = nil
+local ActiveVehList = {}
 
 local function destroyPreview()
     if VehicleShow and DoesEntityExist(VehicleShow) then
@@ -157,222 +159,6 @@ local function getVehMetadata(data)
         {label = '🔧 Motor', value = math.floor(engine / 10) .. '%', progress = math.floor(engine / 10), colorScheme = utils.getColorLevel(math.floor(engine / 10))}
     }
 end
---- Garage Action
----@param data GarageVehicleData
-local function actionMenu(data)
-    local actionData = {
-        id = 'garage_action',
-        title = data.plate or data.vehName,
-        description = data.vehicle_name,
-        menu = 'garage_menu',
-        onBack = destroyPreview,
-        onExit = destroyPreview,
-        options = {
-            {
-                title = data.vehName,
-                icon = data.icon --[[@as string]],
-                readOnly = true,
-                iconAnimation = Config.IconAnimation,
-                metadata = getVehMetadata(data),
-            },
-            {
-                title = data.impound and locale('garage.pay_impound') or locale('garage.take_out_veh'),
-                icon = data.impound and 'hand-holding-dollar' or 'sign-out-alt',
-                iconAnimation = Config.IconAnimation,
-                onSelect = function()
-                    if data.impound then
-                        utils.createMenu({
-                            id = 'pay_methode',
-                            title = locale('context.insurance.pay_methode_header'):upper(),
-                            onExit = destroyPreview,
-                            menu = 'garage_action',
-                            options = {
-                                {
-                                    title = locale('context.insurance.pay_methode_cash_title'):upper(),
-                                    icon = 'dollar-sign',
-                                    description = locale('context.insurance.pay_methode_cash_desc'),
-                                    iconAnimation = Config.IconAnimation,
-                                    onSelect = function()
-                                        destroyPreview()
-                                        if fw.gm('cash') < data.depotprice then return utils.notify(locale('notify.error.not_enough_cash'), 'error') end
-                                        local success = lib.callback.await('rhd_garage:cb_server:removeMoney', false, 'cash', data.depotprice)
-                                        if success then
-                                            utils.notify(locale('garage.success_pay_impound'), 'success')
-                                            return spawnvehicle(data)
-                                        end
-                                    end
-                                },
-                                {
-                                    title = locale('context.insurance.pay_methode_bank_title'):upper(),
-                                    icon = 'fab fa-cc-mastercard',
-                                    description = locale('context.insurance.pay_methode_bank_desc'),
-                                    iconAnimation = Config.IconAnimation,
-                                    onSelect = function()
-                                        destroyPreview()
-                                        if fw.gm('bank') < data.depotprice then return utils.notify(locale('notify.error.not_enough_bank'), 'error') end
-                                        local success = lib.callback.await('rhd_garage:cb_server:removeMoney', false, 'bank', data.depotprice)
-                                        if success then
-                                            utils.notify(locale('garage.success_pay_impound'), 'success')
-                                            return spawnvehicle(data)
-                                        end
-                                    end
-                                }
-                            }
-                        })
-                        return
-                    end
-                    local success = destroyPreview()
-                    while not success do
-                        Wait(100)
-                    end
-                    spawnvehicle(data)
-                end
-            },
-        
-        }
-    }
-    
-    if not data.impound and data.plate then
-        if Config.TransferVehicle.enable then
-            actionData.options[#actionData.options + 1] = {
-                title = locale("context.garage.transferveh_title"),
-                icon = "exchange-alt",
-                iconAnimation = Config.IconAnimation,
-                metadata = {
-                    ["Preço"] = 'R$ ' .. lib.math.groupdigits(Config.TransferVehicle.price, '.')
-                },
-                onSelect = function()
-                    destroyPreview()
-                    local transferInput = lib.inputDialog(data.vehName, {
-                        {type = 'number', label = 'Player Id', required = true},
-                    })
-                    
-                    if transferInput then
-                        local clData = {
-                            targetSrc = transferInput[1],
-                            plate = data.plate,
-                            price = Config.TransferVehicle.price,
-                            garage = data.garage
-                        }
-                        lib.callback('rhd_garage:cb_server:transferVehicle', false, function(success, information)
-                            if not success then return
-                                utils.notify(information, "error")
-                            end
-                            
-                            utils.notify(information, "success")
-                        end, clData)
-                    end
-                end
-            }
-        end
-        
-        if Config.SwapGarage.enable and swapEnabled(data.garage) then
-            actionData.options[#actionData.options + 1] = {
-                title = locale('context.garage.swapgarage'),
-                icon = "retweet",
-                iconAnimation = Config.IconAnimation,
-                metadata = {
-                    ["Preço"] = 'R$ ' .. lib.math.groupdigits(Config.SwapGarage.price, '.')
-                },
-                onSelect = function()
-                    destroyPreview()
-                    
-                    local garageTable = function()
-                        local result = {}
-                        for k, v in pairs(GarageZone) do
-                            if k ~= data.garage and not v.impound and canSwapVehicle(k) then
-                                result[#result + 1] = {value = k}
-                            end
-                        end
-                        return result
-                    end
-                    
-                    local garageInput = lib.inputDialog(data.garage:upper(), {
-                        {type = 'select', label = locale('input.garage.swapgarage'), options = garageTable(), required = true},
-                    })
-                    
-                    if garageInput then
-                        local vehdata = {
-                            plate = data.plate,
-                            newgarage = garageInput[1]
-                        }
-                        
-                        if fw.gm('cash') < Config.SwapGarage.price then return utils.notify(locale("notify.error.need_money", lib.math.groupdigits(Config.SwapGarage.price, '.')), 'error') end
-                        local success = lib.callback.await('rhd_garage:cb_server:removeMoney', false, 'cash', Config.SwapGarage.price)
-                        if not success then return end
-                        
-                        lib.callback('rhd_garage:cb_server:swapGarage', false, function(success)
-                            if not success then return
-                                utils.notify(locale("notify.error.swapgarage"), "error")
-                            end
-                            
-                            utils.notify(locale('notify.success.swapgarage', vehdata.newgarage), "success")
-                        end, vehdata)
-                    end
-                end
-            }
-        end
-        
-        actionData.options[#actionData.options + 1] = {
-            title = locale('context.garage.change_veh_name'),
-            icon = 'pencil',
-            iconAnimation = Config.IconAnimation,
-            metadata = {
-                ["Preço"] = 'R$ ' .. lib.math.groupdigits(Config.SwapGarage.price, '.')
-            },
-            onSelect = function()
-                destroyPreview()
-                
-                local input = lib.inputDialog(data.vehName, {
-                    {type = 'input', label = '', placeholder = locale('input.garage.change_veh_name'), required = true, max = 20},
-                })
-                
-                if input then
-                    if fw.gm('cash') < Config.changeNamePrice then return utils.notify(locale('notify.error.not_enough_cash'), 'error') end
-                    
-                    local success = lib.callback.await('rhd_garage:cb_server:removeMoney', false, 'cash', Config.changeNamePrice)
-                    if success then
-                        CNV[data.plate] = {
-                            name = input[1]
-                        }
-                        TriggerServerEvent('rhd_garage:server:saveCustomVehicleName', CNV)
-                    end
-                end
-            end
-        }
-        
-        actionData.options[#actionData.options + 1] = {
-            title = locale('context.garage.vehicle_keys'),
-            icon = 'key',
-            iconAnimation = Config.IconAnimation,
-            metadata = {
-                ["Preço"] = 'R$ ' .. lib.math.groupdigits(Config.GiveKeys.price, '.')
-            },
-            onSelect = function()
-                
-                
-                local input = lib.alertDialog({
-                    header = 'Criar cópia de chave',
-                    content = 'Você deseja copiar a chave do seu veículo por R$' .. Config.GiveKeys.price .. '?',
-                    centered = true,
-                    cancel = true
-                }) == "confirm"
-                
-                if input then
-                    if fw.gm('cash') < Config.GiveKeys.price then destroyPreview() return utils.notify('Você não possui dinheiro suficiente na carteira.', 'error') end
-                    
-                    local success = lib.callback.await('rhd_garage:cb_server:removeMoney', false, 'cash', Config.GiveKeys.price)
-                    if success then
-                        exports.mri_Qcarkeys:GiveKeyItem(data.plate, data.entity)
-                    end
-                end
-                destroyPreview()
-            end
-        }
-    end
-    
-    utils.createMenu(actionData)
-end
 
 --- Get available spawn point
 ---@param points table
@@ -401,60 +187,6 @@ local function getAvailableSP(points, ignoreDist, defaultCoords)
     end
 end
 
-local function listAddedVehicles(data, menuData)
-    for i = 1, #data.vehicles do
-        local v = data.vehicles[i]
-        local vehModel = v
-        local vehName = GetLabelText(GetDisplayNameFromVehicleModel(v))
-        
-        
-        menuData.options[#menuData.options + 1] = {
-            title = vehName,
-            icon = 'car',
-            iconColor = 'white',
-            onSelect = function()
-                local defaultcoords = vec(GetOffsetFromEntityInWorldCoords(cache.ped, 0.0, 2.0, 0.5), GetEntityHeading(cache.ped) + 90)
-                
-                if data.spawnpoint then
-                    defaultcoords = getAvailableSP(data.spawnpoint, data.ignoreDist, defaultcoords)
-                end
-                
-                if not defaultcoords then
-                    return utils.notify(locale('notify.error.no_parking_spot'), 'error', 8000)
-                end
-                
-                local vehInArea = lib.getClosestVehicle(defaultcoords.xyz)
-                if DoesEntityExist(vehInArea) then return utils.notify(locale('notify.error.no_parking_spot'), 'error') end
-                
-                VehicleShow = utils.createPreviewVeh(vehModel, defaultcoords)
-                FreezeEntityPosition(VehicleShow, true)
-                SetVehicleDoorsLocked(VehicleShow, 2)
-                utils.createPreviewCam(VehicleShow)
-                
-                actionMenu({
-                    prop = nil,
-                    engine = 1000,
-                    fuel = 100,
-                    body = 1000,
-                    model = vehModel,
-                    plate = nil,
-                    coords = defaultcoords,
-                    garage = data.garage,
-                    vehName = vehName,
-                    vehicle_name = nil,
-                    impound = data.impound,
-                    shared = data.shared,
-                    deformation = nil,
-                    depotprice = nil,
-                    entity = VehicleShow
-                })
-            end,
-        }
-    end
-    
-    return menuData
-end
-
 --- Open Garage
 ---@param data GarageVehicleData
 local function openMenu(data)
@@ -462,150 +194,285 @@ local function openMenu(data)
     if not data then return end
     data.type = data.type or "car"
     
-    local menuData = {
-        id = 'garage_menu',
-        title = data.garage,
-        options = {}
-    }
+    ActiveGarageData = data -- Store for callbacks
+
+    local vehicles = {}
     
+    -- Handle service vehicles
     if data.vehicles then
-        menuData = listAddedVehicles(data, menuData)
-        if #menuData.options >= 1 then
-            utils.createMenu(menuData)
-            return
+        for i = 1, #data.vehicles do
+            local v = data.vehicles[i]
+            local vehModel = v
+            local vehName = GetLabelText(GetDisplayNameFromVehicleModel(v))
+            
+            vehicles[#vehicles+1] = {
+                name = vehName,
+                plate = "SERVIÇO",
+                realPlate = "SERVICE_" .. i, -- Temp unique key
+                fuel = 100,
+                engine = 1000,
+                body = 1000,
+                icon = 'car',
+                disabled = false,
+                impound = false,
+                originalData = {
+                    model = vehModel,
+                    garage = data.garage,
+                    vehName = vehName,
+                    impound = false,
+                    shared = data.shared,
+                    engine = 1000,
+                    fuel = 100,
+                    body = 1000,
+                }
+            }
         end
     end
-    
+
+    -- Handle owned vehicles
     local vehData = lib.callback.await('rhd_garage:cb_server:getVehicleList', false, data.garage, data.impound, data.shared)
     
-    if not vehData then
-        return
-    end
-    
-    for i = 1, #vehData do
-        local vd = vehData[i]
-        local vehProp = vd.vehicle
-        local vehModel = vd.model
-        local plate = utils.string.trim(vd.plate)
-        local vehDeformation = vd.deformation
-        local gState = vd.state
-        local pName = vd.owner or "Unkown Players"
-        local fakeplate = vd.fakeplate and utils.string.trim(vd.fakeplate)
-        local engine = vd.engine
-        local body = vd.body
-        local fuel = vd.fuel
-        local dp = vd.depotprice
-        
-        local vehName = vd.vehicle_name or fw.gvn(vehModel)
-        local customvehName = CNV[plate] and CNV[plate].name
-        local vehlabel = customvehName or vehName
-        
-        local shared_garage = data.shared
-        local disabled = false
-        local description = ''
-        
-        plate = fakeplate or plate
-        
-        local vehicleClass = GetVehicleClassFromName(vehModel)
-        local vehicleType = utils.getCategoryByClass(vehicleClass)
-        
-        if lib.table.contains(data.type, vehicleType) then
-            local icon = Config.Icons[vehicleClass] or 'car'
-            local ImpoundPrice = dp > 0 and dp or Config.ImpoundPrice[vehicleClass]
-            local impound
-            if gState == 0 then
-                if (Config.VehiclesInAllGarages and vehFunc.govbp(plate)) or (not Config.VehiclesInAllGarages and vehFunc.tvbp(plate, data.garage)) then
-                    disabled = not Config.LocateVehicleOutGarage
-                    description = 'STATUS: ' .. locale('status.out')
-                elseif Config.VehiclesInAllGarages and vehFunc.tvbp(plate, nil) then
-                    disabled = not Config.LocateVehicleOutGarage
-                    description = 'STATUS: ' .. locale('status.out')
-                else
-                    if Config.VehiclesInAllGarages then
+    if vehData then
+        for i = 1, #vehData do
+            local vd = vehData[i]
+            local vehModel = vd.model
+            local plate = utils.string.trim(vd.plate)
+            local gState = vd.state
+            local fakeplate = vd.fakeplate and utils.string.trim(vd.fakeplate)
+            local engine = vd.engine
+            local body = vd.body
+            local fuel = vd.fuel
+            local dp = vd.depotprice
+            
+            local vehName = vd.vehicle_name or fw.gvn(vehModel)
+            local customvehName = CNV[plate] and CNV[plate].name
+            local vehlabel = customvehName or vehName
+            
+            local disabled = false
+            local impound = false
+            
+            local displayPlate = fakeplate or plate
+            
+            local vehicleClass = GetVehicleClassFromName(vehModel)
+            local vehicleType = utils.getCategoryByClass(vehicleClass)
+            
+            if lib.table.contains(data.type, vehicleType) then
+                local icon = Config.Icons[vehicleClass] or 'car'
+                local ImpoundPrice = dp > 0 and dp or Config.ImpoundPrice[vehicleClass]
+                
+                if gState == 0 then
+                    if (Config.VehiclesInAllGarages and vehFunc.govbp(plate)) or (not Config.VehiclesInAllGarages and vehFunc.tvbp(plate, data.garage)) then
+                        disabled = not Config.LocateVehicleOutGarage
+                    elseif Config.VehiclesInAllGarages and vehFunc.tvbp(plate, nil) then
+                        disabled = not Config.LocateVehicleOutGarage
+                    else
                         impound = true
                     end
-                    description = locale('garage.impound_price', ImpoundPrice)
                 end
-            end
-            
-            if gState == 1 then
-                impound = false
-                description = 'STATUS: ' .. locale('status.in')
-                if shared_garage then
-                    description = locale('context.garage.owner_label', pName) .. ' \n' .. 'STATUS: ' .. locale('status.in')
-                end
-            end
-            
-            local vehicleLabel = ('%s [ %s ]'):format(vehlabel, plate)
-            menuData.options[#menuData.options + 1] = {
-                title = vehicleLabel,
-                icon = icon,
-                disabled = disabled,
-                description = description:upper(),
-                iconAnimation = Config.IconAnimation,
-                metadata = getVehMetadata(vd),
-                onSelect = function()
-                    if gState == 0 and vehFunc.tvbp(plate, nil) and not disabled then
-                        if vehFunc.tvbp(plate, nil, true) then
-                            return utils.notify(locale('notify.success.locate_vehicle'), 'success', 8000)
-                        end
-                    end
-
-                    local pedHeading = GetEntityHeading(cache.ped)
-                    local worlcoords = GetOffsetFromEntityInWorldCoords(cache.ped, 0.0, 2.0, 0.5)
-                    local defaultcoords = vec(worlcoords, pedHeading + 90)
-                    
-                    if data.spawnpoint then
-                        defaultcoords = getAvailableSP(data.spawnpoint, data.ignoreDist, defaultcoords)--[[@as vector4]]
-                    end
-                    
-                    if not defaultcoords then
-                        return utils.notify(locale('notify.error.no_parking_spot'), 'error', 8000)
-                    end
-                    
-                    local vehInArea = lib.getClosestVehicle(defaultcoords.xyz)
-                    if DoesEntityExist(vehInArea) then return utils.notify(locale('notify.error.no_parking_spot'), 'error') end
-                    
-                    VehicleShow = utils.createPreviewVeh(vehModel, defaultcoords)
-                    FreezeEntityPosition(VehicleShow, true)
-                    SetVehicleDoorsLocked(VehicleShow, 2)
-                    utils.createPreviewCam(VehicleShow)
-                    
-                    if vehProp and next(vehProp) then
-                        vehFunc.svp(VehicleShow, vehProp)
-                    end
-                    
-                    actionMenu({
-                        prop = vehProp,
+                
+                vehicles[#vehicles+1] = {
+                    name = vehlabel,
+                    plate = displayPlate,
+                    realPlate = plate,
+                    fuel = fuel,
+                    engine = engine,
+                    body = body,
+                    icon = icon,
+                    disabled = disabled,
+                    impound = impound,
+                    depotprice = ImpoundPrice,
+                    originalData = {
+                        prop = vd.vehicle,
                         engine = engine,
                         fuel = fuel,
                         body = body,
                         model = vehModel,
                         plate = plate,
-                        coords = defaultcoords,
                         garage = data.garage,
-                        vehName = vehicleLabel,
-                        vehicle_name = vehlabel,
+                        vehName = vehlabel,
                         impound = impound,
                         shared = data.shared,
-                        deformation = vehDeformation,
+                        deformation = vd.deformation,
                         depotprice = ImpoundPrice,
                         icon = icon
-                    })
-                end,
+                    }
+                }
+            end
+        end
+    end
+
+    if #vehicles < 1 then
+        utils.notify(locale('garage.no_vehicles'):upper(), 'info')
+        return
+    end
+
+    ActiveVehList = vehicles
+    
+    SendNUIMessage({
+        action = "open",
+        garage = data.garage,
+        vehicles = vehicles
+    })
+    SetNuiFocus(true, true)
+end
+
+-- NUI Callbacks
+RegisterNUICallback('close', function(_, cb)
+    SetNuiFocus(false, false)
+    ActiveGarageData = nil
+    ActiveVehList = {}
+    cb('ok')
+end)
+
+local function getVehFromList(plate)
+    for i=1, #ActiveVehList do
+        if (ActiveVehList[i].realPlate or ActiveVehList[i].plate) == plate then
+            return ActiveVehList[i]
+        end
+    end
+    return nil
+end
+
+RegisterNUICallback('spawnVehicle', function(data, cb)
+    local veh = getVehFromList(data.plate)
+    if not veh then return cb('error') end
+
+    SetNuiFocus(false, false)
+    
+    local d = veh.originalData
+    local defaultcoords = vec(GetOffsetFromEntityInWorldCoords(cache.ped, 0.0, 2.0, 0.5), GetEntityHeading(cache.ped) + 90)
+    
+    if ActiveGarageData.spawnpoint then
+        defaultcoords = getAvailableSP(ActiveGarageData.spawnpoint, ActiveGarageData.ignoreDist, defaultcoords)
+    end
+    
+    if not defaultcoords then
+        utils.notify(locale('notify.error.no_parking_spot'), 'error', 8000)
+        return cb('ok')
+    end
+    
+    local vehInArea = lib.getClosestVehicle(defaultcoords.xyz)
+    if DoesEntityExist(vehInArea) then 
+        utils.notify(locale('notify.error.no_parking_spot'), 'error') 
+        return cb('ok')
+    end
+
+    d.coords = defaultcoords
+
+    if veh.impound then
+        utils.createMenu({
+            id = 'pay_methode',
+            title = locale('context.insurance.pay_methode_header'):upper(),
+            options = {
+                {
+                    title = locale('context.insurance.pay_methode_cash_title'):upper(),
+                    icon = 'dollar-sign',
+                    description = locale('context.insurance.pay_methode_cash_desc'),
+                    onSelect = function()
+                        if fw.gm('cash') < veh.depotprice then return utils.notify(locale('notify.error.not_enough_cash'), 'error') end
+                        local success = lib.callback.await('rhd_garage:cb_server:removeMoney', false, 'cash', veh.depotprice)
+                        if success then
+                            utils.notify(locale('garage.success_pay_impound'), 'success')
+                            spawnvehicle(d)
+                        end
+                    end
+                },
+                {
+                    title = locale('context.insurance.pay_methode_bank_title'):upper(),
+                    icon = 'fab fa-cc-mastercard',
+                    description = locale('context.insurance.pay_methode_bank_desc'),
+                    onSelect = function()
+                        if fw.gm('bank') < veh.depotprice then return utils.notify(locale('notify.error.not_enough_bank'), 'error') end
+                        local success = lib.callback.await('rhd_garage:cb_server:removeMoney', false, 'bank', veh.depotprice)
+                        if success then
+                            utils.notify(locale('garage.success_pay_impound'), 'success')
+                            spawnvehicle(d)
+                        end
+                    end
+                }
             }
+        })
+    else
+        spawnvehicle(d)
+    end
+    
+    cb('ok')
+end)
+
+RegisterNUICallback('transferVehicle', function(data, cb)
+    local veh = getVehFromList(data.plate)
+    if not veh or not Config.TransferVehicle.enable then return cb('error') end
+    
+    SetNuiFocus(false, false)
+    
+    local transferInput = lib.inputDialog(veh.name, {
+        {type = 'number', label = 'Player Id', required = true},
+    })
+    
+    if transferInput then
+        local clData = {
+            targetSrc = transferInput[1],
+            plate = veh.realPlate or veh.plate,
+            price = Config.TransferVehicle.price,
+            garage = ActiveGarageData.garage
+        }
+        lib.callback('rhd_garage:cb_server:transferVehicle', false, function(success, information)
+            if not success then return utils.notify(information, "error") end
+            utils.notify(information, "success")
+        end, clData)
+    end
+    
+    cb('ok')
+end)
+
+RegisterNUICallback('renameVehicle', function(data, cb)
+    local veh = getVehFromList(data.plate)
+    if not veh then return cb('error') end
+    
+    SetNuiFocus(false, false)
+    
+    local input = lib.inputDialog(veh.name, {
+        {type = 'input', label = '', placeholder = locale('input.garage.change_veh_name'), required = true, max = 20},
+    })
+    
+    if input then
+        if fw.gm('cash') < Config.changeNamePrice then return utils.notify(locale('notify.error.not_enough_cash'), 'error') end
+        
+        local success = lib.callback.await('rhd_garage:cb_server:removeMoney', false, 'cash', Config.changeNamePrice)
+        if success then
+            CNV[veh.realPlate or veh.plate] = { name = input[1] }
+            TriggerServerEvent('rhd_garage:server:saveCustomVehicleName', CNV)
         end
     end
     
-    if #menuData.options < 1 then
-        menuData.options[#menuData.options + 1] = {
-            title = locale('garage.no_vehicles'):upper(),
-            disabled = true
-        }
+    cb('ok')
+end)
+
+RegisterNUICallback('copyKeys', function(data, cb)
+    local veh = getVehFromList(data.plate)
+    if not veh then return cb('error') end
+    
+    SetNuiFocus(false, false)
+    
+    local input = lib.alertDialog({
+        header = 'Criar cópia de chave',
+        content = 'Você deseja copiar a chave do seu veículo por R$' .. Config.GiveKeys.price .. '?',
+        centered = true,
+        cancel = true
+    }) == "confirm"
+    
+    if input then
+        if fw.gm('cash') < Config.GiveKeys.price then return utils.notify('Você não possui dinheiro suficiente na carteira.', 'error') end
+        
+        local success = lib.callback.await('rhd_garage:cb_server:removeMoney', false, 'cash', Config.GiveKeys.price)
+        if success then
+            exports.mri_Qcarkeys:GiveKeyItem(veh.realPlate or veh.plate)
+        end
     end
     
-    utils.createMenu(menuData)
-end
+    cb('ok')
+end)
+
 
 --- Store Vehicle To Garage
 ---@param data GarageVehicleData

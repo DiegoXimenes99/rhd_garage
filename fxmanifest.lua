@@ -4,6 +4,9 @@ version '1.4.1'
 author 'Reyghita Hafizh Firmanda'
 description 'Garage system for ESX & QBCore made by RHD Team'
 
+ui_page 'nui/index.html'
+
+
 shared_scripts {
     '@ox_lib/init.lua',
     '@qbx_core/modules/lib.lua',
@@ -38,7 +41,11 @@ files {
     'modules/deformation.lua',
     'modules/spawnpoint.lua',
     'modules/pedcreator.lua',
+    'nui/index.html',
+    'nui/style.css',
+    'nui/script.js',
 }
+
 
 ox_lib "locale"
 
